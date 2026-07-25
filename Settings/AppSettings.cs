@@ -34,6 +34,17 @@ public sealed class AppSettings
     public bool HorizontalSmoothness { get; set; } = true;
     public bool ReverseWheelDirection { get; set; } = false;
 
+    /// <summary>
+    /// Additional, independent inversion applied only to third-party injected
+    /// wheel events (software KVMs like Synergy/Barrier/Input Leap, RDP,
+    /// automation tools). Off by default — most setups don't need it. Exists
+    /// because an injected source can carry a different effective sign
+    /// convention than real hardware for the same physical scroll gesture
+    /// (e.g. a Synergy client receiving scroll forwarded from a macOS
+    /// server), independent of whatever ReverseWheelDirection is set to.
+    /// </summary>
+    public bool ReverseInjectedWheelDirection { get; set; } = false;
+
     // ── Startup & UI ────────────────────────────────────────────────
     public bool StartWithWindows { get; set; } = false;
     public bool StartMinimized { get; set; } = true;

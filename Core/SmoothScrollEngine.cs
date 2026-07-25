@@ -95,7 +95,7 @@ public sealed class SmoothScrollEngine : IDisposable
         _thread?.Join(1000);
     }
 
-    public void OnWheel(int delta)
+    public void OnWheel(int delta, bool isInjected = false)
     {
         lock (_lock)
         {
@@ -105,6 +105,12 @@ public sealed class SmoothScrollEngine : IDisposable
             }
 
             var dir = _s.ReverseWheelDirection ? -1 : 1;
+            // Third-party injected input (software KVMs like Synergy, RDP, etc.)
+            // can carry a different effective sign convention than real hardware
+            // for the same physical scroll gesture (e.g. a Synergy client
+            // receiving scroll forwarded from a macOS server). Never assume it
+            // shares the hardware path's convention — apply this independently.
+            if (isInjected && _s.ReverseInjectedWheelDirection) dir *= -1;
             var now = Environment.TickCount64;
             _v.RegisterNotch(now, delta * dir, _s);
             _lastAxis = ScrollAxis.Vertical;
@@ -256,7 +262,7 @@ public sealed class SmoothScrollEngine : IDisposable
                 type = 0,
                 U = new NativeMethods.InputUnion
                 {
-                    mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_WHEEL, mouseData = mouseData }
+                    mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_WHEEL, mouseData = mouseData, dwExtraInfo = NativeMethods.OWN_INPUT_SIGNATURE }
                 }
             };
             NativeMethods.SendInput(1, [inp], size);

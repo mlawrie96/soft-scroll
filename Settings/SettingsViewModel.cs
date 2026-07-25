@@ -30,6 +30,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         ShiftKeyHorizontal = s.ShiftKeyHorizontal;
         HorizontalSmoothness = s.HorizontalSmoothness;
         ReverseWheelDirection = s.ReverseWheelDirection;
+        ReverseInjectedWheelDirection = s.ReverseInjectedWheelDirection;
         StartWithWindows = s.StartWithWindows;
         StartMinimized = s.StartMinimized;
         ZoomSmoothing = s.ZoomSmoothing;
@@ -94,6 +95,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         ShiftKeyHorizontal = ShiftKeyHorizontal,
         HorizontalSmoothness = HorizontalSmoothness,
         ReverseWheelDirection = ReverseWheelDirection,
+        ReverseInjectedWheelDirection = ReverseInjectedWheelDirection,
         StartWithWindows = StartWithWindows,
         StartMinimized = StartMinimized,
         Language = Language,
@@ -181,6 +183,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     private bool _reverse;
     public bool ReverseWheelDirection { get => _reverse; set { if (Set(ref _reverse, value)) OnSettingsChanged(); } }
+
+    private bool _reverseInjected;
+    public bool ReverseInjectedWheelDirection { get => _reverseInjected; set { if (Set(ref _reverseInjected, value)) OnSettingsChanged(); } }
 
     private bool _startWithWindows;
     public bool StartWithWindows { get => _startWithWindows; set { if (Set(ref _startWithWindows, value)) OnSettingsChanged(); } }

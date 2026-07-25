@@ -178,7 +178,8 @@ public sealed class ZoomSmoothEngine : IDisposable
                     mi = new NativeMethods.MOUSEINPUT
                     {
                         dwFlags = NativeMethods.MOUSEEVENTF_WHEEL,
-                        mouseData = mouseData
+                        mouseData = mouseData,
+                        dwExtraInfo = NativeMethods.OWN_INPUT_SIGNATURE
                     }
                 }
             },

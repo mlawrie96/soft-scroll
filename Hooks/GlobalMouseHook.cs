@@ -7,7 +7,21 @@ public sealed class MouseWheelEventArgs : EventArgs
 {
     public int Delta { get; }
     public bool Handled { get; set; }
-    public MouseWheelEventArgs(int delta) => Delta = delta;
+
+    /// <summary>
+    /// True when this event came from a third-party injected source (a
+    /// software KVM like Synergy/Barrier/Input Leap, RDP, automation tools,
+    /// etc.) rather than real hardware. Our own re-emitted pulses never
+    /// reach event consumers at all — they're filtered out earlier in
+    /// GlobalMouseHook by signature, before this class is even constructed.
+    /// </summary>
+    public bool IsInjected { get; }
+
+    public MouseWheelEventArgs(int delta, bool isInjected = false)
+    {
+        Delta = delta;
+        IsInjected = isInjected;
+    }
 }
 
 public sealed class MousePositionEventArgs : EventArgs
@@ -69,13 +83,26 @@ public sealed class GlobalMouseHook : IDisposable
             var msg = wParam.ToInt32();
             var data = System.Runtime.InteropServices.Marshal.PtrToStructure<NativeMethods.MSLLHOOKSTRUCT>(lParam);
 
-            if ((data.flags & (NativeMethods.LLMHF_INJECTED | NativeMethods.LLMHF_LOWER_IL_INJECTED)) != 0)
+            // Only skip events we injected ourselves (identified by our own
+            // dwExtraInfo signature) to avoid reprocessing our own re-emitted
+            // pulses. Other injected input — software KVMs like Synergy,
+            // Barrier, or Input Leap; RDP; automation tools — is also flagged
+            // LLMHF_INJECTED by Windows, but must still flow through the
+            // normal pipeline below so it gets the same smoothing and
+            // reversal as real hardware input, instead of being silently
+            // ignored.
+            if ((data.flags & (NativeMethods.LLMHF_INJECTED | NativeMethods.LLMHF_LOWER_IL_INJECTED)) != 0
+                && data.dwExtraInfo == NativeMethods.OWN_INPUT_SIGNATURE)
                 return NativeMethods.CallNextHookEx(_hook, nCode, wParam, lParam);
 
             if (msg == NativeMethods.WM_MOUSEWHEEL)
             {
+                // Reaching this point, the event is either real hardware, or
+                // third-party injected input (Synergy/RDP/etc) — our own
+                // signature-matched pulses were already filtered out above.
+                bool isInjected = (data.flags & (NativeMethods.LLMHF_INJECTED | NativeMethods.LLMHF_LOWER_IL_INJECTED)) != 0;
                 int delta = (short)((data.mouseData >> 16) & 0xffff);
-                var args = new MouseWheelEventArgs(delta);
+                var args = new MouseWheelEventArgs(delta, isInjected);
 
                 if (_keyboard.IsCtrlPressed)
                 {
@@ -89,7 +116,7 @@ public sealed class GlobalMouseHook : IDisposable
                     // (positive = right), so we invert here too — otherwise the two
                     // inversions cancel and Shift+wheel direction is reversed.
                     // See GitHub issue #13.
-                    var hArgs = new MouseWheelEventArgs(-delta);
+                    var hArgs = new MouseWheelEventArgs(-delta, isInjected);
                     MouseHWheel?.Invoke(this, hArgs);
                     if (hArgs.Handled)
                         args.Handled = true;
@@ -104,8 +131,9 @@ public sealed class GlobalMouseHook : IDisposable
             }
             else if (msg == NativeMethods.WM_MOUSEHWHEEL)
             {
+                bool isInjected = (data.flags & (NativeMethods.LLMHF_INJECTED | NativeMethods.LLMHF_LOWER_IL_INJECTED)) != 0;
                 int delta = (short)((data.mouseData >> 16) & 0xffff);
-                var args = new MouseWheelEventArgs(delta);
+                var args = new MouseWheelEventArgs(delta, isInjected);
                 MouseHWheel?.Invoke(this, args);
                 if (args.Handled)
                     return (IntPtr)1;

@@ -167,7 +167,7 @@ public partial class App : System.Windows.Application
             {
                 ResetHorizontalCarryIfNeeded();
                 args.Handled = true;
-                _engine!.OnWheel(args.Delta);
+                _engine!.OnWheel(args.Delta, args.IsInjected);
                 ScrollStatistics.Instance.RecordScroll(args.Delta);
             }
         };

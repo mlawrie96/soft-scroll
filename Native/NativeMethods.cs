@@ -22,6 +22,14 @@ internal static class NativeMethods
     internal const int LLMHF_INJECTED = 0x00000001;
     internal const int LLMHF_LOWER_IL_INJECTED = 0x00000002;
 
+    // Unique dwExtraInfo signature stamped on every mouse event Soft Scroll
+    // injects itself, so GlobalMouseHook can tell "our own re-emitted pulse"
+    // apart from other injected input (software KVMs like Synergy/Barrier/
+    // Input Leap, RDP, automation tools, etc.), which Windows also marks
+    // LLMHF_INJECTED but which must still flow through the normal
+    // smoothing/reversal pipeline like real hardware input.
+    internal const nint OWN_INPUT_SIGNATURE = 0x53534C49; // "SSLI"
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct POINT { public int x; public int y; }
 

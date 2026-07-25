@@ -4,6 +4,85 @@ Persistent knowledge base for SoftScroll project. Read at the start of every ses
 
 ---
 
+## 2026-07-24 — Blanket injected-event skip breaks software KVMs (Synergy/Barrier/Input Leap)
+
+### Symptom
+
+User reported "Reverse Wheel Direction" (and, on investigation, smoothing generally) silently doing
+nothing — but only for a mouse shared over Synergy (a software KVM). The same physical mouse plugged
+directly into the machine worked correctly. No settings, exclusion list entries, or driver conflicts
+were involved; extensive troubleshooting (G HUB, AV/EDR, WDAC/AppLocker, Smart App Control, reinstall)
+ruled out everything except Soft Scroll itself.
+
+### Root cause analysis
+
+`GlobalMouseHook.HookCallback` unconditionally skips **any** mouse event carrying `LLMHF_INJECTED` /
+`LLMHF_LOWER_IL_INJECTED`:
+
+```csharp
+if ((data.flags & (NativeMethods.LLMHF_INJECTED | NativeMethods.LLMHF_LOWER_IL_INJECTED)) != 0)
+    return NativeMethods.CallNextHookEx(_hook, nCode, wParam, lParam);
+```
+
+This exists to stop the hook from reprocessing its own `SendInput`-emitted pulses (which would
+otherwise re-enter `OnWheel`/`OnHWheel` and feed back on themselves). But Windows sets the same
+`LLMHF_INJECTED` flag for **any** synthetic input, not just our own — including input forwarded by
+software KVMs (Synergy, Barrier, Input Leap), RDP sessions, and general automation tooling. The check
+had no way to distinguish "this is my own re-emitted pulse" from "this is a real user scrolling via a
+KVM," so it silently dropped both the smoothing and the `ReverseWheelDirection` handling for every KVM
+user — with no error, no log entry, and no setting to disable it. This affected all three `SendInput`
+emission sites that share the hook: `SmoothScrollEngine.SendWheel` (vertical wheel), `ZoomSmoothEngine.
+EmitZoomViaSendInput` (Ctrl+wheel zoom), and `MiddleClickScrollEngine.SendWheel` (middle-click drag
+scroll) — a KVM user got none of the app's core features, not just reversal.
+
+### The fix
+
+1. **Tag our own output.** Every `SendInput`-emitted `MOUSEINPUT` at all three call sites now sets
+   `dwExtraInfo = NativeMethods.OWN_INPUT_SIGNATURE` (a private magic constant), so our own synthetic
+   events are positively identifiable rather than merely "injected."
+2. **Narrow the skip condition** in `GlobalMouseHook.HookCallback` from "skip all injected events" to
+   "skip only injected events carrying our signature":
+   ```csharp
+   if ((data.flags & (NativeMethods.LLMHF_INJECTED | NativeMethods.LLMHF_LOWER_IL_INJECTED)) != 0
+       && data.dwExtraInfo == NativeMethods.OWN_INPUT_SIGNATURE)
+       return NativeMethods.CallNextHookEx(_hook, nCode, wParam, lParam);
+   ```
+
+Third-party injected input (no matching signature) now falls through to the normal dispatch logic
+below and gets full smoothing/reversal/zoom/middle-click treatment, identical to real hardware. Our
+own re-emitted pulses still carry the signature and are still correctly ignored, so the feedback-loop
+protection this check existed for is preserved.
+
+### Architectural rule going forward
+
+**A "was this injected by me" check must be a positive identity check (a signature we control), never
+a property Windows assigns to all synthetic input generically.** `LLMHF_INJECTED` answers "is this
+synthetic," not "did Soft Scroll create this" — those are different questions, and conflating them
+silently breaks every legitimate synthetic-input source we don't personally control (KVMs, RDP,
+accessibility tools, automation). Any future code that injects mouse or keyboard input via `SendInput`
+must stamp `dwExtraInfo` with `OWN_INPUT_SIGNATURE` and any hook-side self-filtering must check for
+that exact value, not the generic injected flag.
+
+### Verification checklist before declaring this fix complete
+
+1. Direct-plugged mouse: vertical wheel smoothing + reversal — unaffected, still correct (regression
+   check: the old blanket skip never applied to real hardware anyway, but confirm no double-reversal
+   was introduced by the narrower check).
+2. Software-KVM-forwarded mouse (Synergy/Barrier/Input Leap): vertical wheel now gets smoothing +
+   correct reversal, matching the direct-plugged experience.
+3. Ctrl+wheel zoom and middle-click drag scroll: unaffected on direct mouse, now also work over a KVM.
+4. No feedback loop / runaway scrolling on either input path (our own pulses are still filtered out).
+5. `dotnet build` — 0 warnings, 0 errors.
+
+### Files changed
+
+- `Native/NativeMethods.cs` — added `OWN_INPUT_SIGNATURE` constant.
+- `Hooks/GlobalMouseHook.cs` — narrowed the injected-event skip to require the signature match.
+- `Core/SmoothScrollEngine.cs`, `Core/ZoomSmoothEngine.cs`, `Core/MiddleClickScrollEngine.cs` — stamp
+  `dwExtraInfo = OWN_INPUT_SIGNATURE` on every `SendInput`-emitted `MOUSEINPUT`.
+
+---
+
 ## 2026-07-11 — Issue #13: Shift+wheel regression introduced by horizontal scroll fix
 
 ### Symptom (regression reported by user on build from commit `be8fdc8`)

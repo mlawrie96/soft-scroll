@@ -173,8 +173,8 @@ public sealed class MiddleClickScrollEngine : IDisposable
         {
             var inputs = new NativeMethods.INPUT[]
             {
-                new() { type = 0, U = new NativeMethods.InputUnion { mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_WHEEL, mouseData = vMouseData } } },
-                new() { type = 0, U = new NativeMethods.InputUnion { mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_HWHEEL, mouseData = hMouseData } } },
+                new() { type = 0, U = new NativeMethods.InputUnion { mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_WHEEL, mouseData = vMouseData, dwExtraInfo = NativeMethods.OWN_INPUT_SIGNATURE } } },
+                new() { type = 0, U = new NativeMethods.InputUnion { mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_HWHEEL, mouseData = hMouseData, dwExtraInfo = NativeMethods.OWN_INPUT_SIGNATURE } } },
             };
             NativeMethods.SendInput(2, inputs, size);
         }
@@ -185,7 +185,7 @@ public sealed class MiddleClickScrollEngine : IDisposable
                 type = 0,
                 U = new NativeMethods.InputUnion
                 {
-                    mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_WHEEL, mouseData = vMouseData }
+                    mi = new NativeMethods.MOUSEINPUT { dwFlags = NativeMethods.MOUSEEVENTF_WHEEL, mouseData = vMouseData, dwExtraInfo = NativeMethods.OWN_INPUT_SIGNATURE }
                 }
             };
             NativeMethods.SendInput(1, [inp], size);
