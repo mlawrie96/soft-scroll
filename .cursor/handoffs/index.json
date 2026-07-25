@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "load_last_n": 1,
+  "max_entries": 50,
+  "recent": [
+    {
+      "created_at": "2026-07-24T23:32:54-0700",
+      "created_by": "cursor",
+      "title": "SoftScroll Synergy quarantine 900ms shipped",
+      "slug": "softscroll-synergy-quarantine-900ms-shipped",
+      "path": ".cursor/handoffs/2026-07-24_2332__softscroll-synergy-quarantine-900ms-shipped.md",
+      "git": {
+        "branch": "main",
+        "commit": "a5c5899"
+      }
+    }
+  ]
+}
