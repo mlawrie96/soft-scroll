@@ -58,7 +58,14 @@ namespace SoftScroll.Core;
                 var devices = new NativeMethods.RAWINPUTDEVICELIST[deviceCount];
                 result = NativeMethods.GetRawInputDeviceList(devices, ref deviceCount, (uint)Marshal.SizeOf<NativeMethods.RAWINPUTDEVICELIST>());
 
-                if (result != 0)
+                // Unlike the first call above (null buffer), a populated-buffer
+                // call returns the number of elements copied on success, not 0 —
+                // only (UINT)-1 indicates failure. Checking "!= 0" here treated
+                // every successful enumeration as a failure and skipped
+                // populating _knownTouchpadHandles/_knownMouseHandles entirely,
+                // silently disabling AutoDisableOnTouchpad's primary detection
+                // path on every single launch.
+                if (result == unchecked((uint)-1))
                 {
                     Log.Warning("[InputDetector] Failed to enumerate devices: {Result}", result);
                     return;
