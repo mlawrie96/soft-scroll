@@ -75,6 +75,8 @@ public partial class App : System.Windows.Application
         _tray.ToggleHotkeyRequested += (_, _) => ToggleEnabled();
 
         _engine = new SmoothScrollEngine(_settings);
+        InjectedWheelQuarantine.Start();
+
         _zoomEngine = new ZoomSmoothEngine();
         _middleClickEngine = new MiddleClickScrollEngine();
 
@@ -134,6 +136,12 @@ public partial class App : System.Windows.Application
         _hook.MouseWheel += (_, args) =>
         {
             if (!_settings.Enabled) return;
+            // Synergy residual wheel during Mac 4-finger gestures — swallow injected only.
+            if (InjectedWheelQuarantine.ShouldDrop(args.IsInjected))
+            {
+                args.Handled = true;
+                return;
+            }
             if (IsDisabledByHold()) return;
             if (IsExcludedApp()) return;
             if (IsOwnWindow()) return;
@@ -174,6 +182,11 @@ public partial class App : System.Windows.Application
         _hook.MouseHWheel += (_, args) =>
         {
             if (!_settings.Enabled) return;
+            if (InjectedWheelQuarantine.ShouldDrop(args.IsInjected))
+            {
+                args.Handled = true;
+                return;
+            }
             if (IsDisabledByHold()) return;
             if (IsExcludedApp()) return;
             if (IsOwnWindow()) return;
@@ -405,6 +418,7 @@ public partial class App : System.Windows.Application
     protected override void OnExit(ExitEventArgs e)
     {
         base.OnExit(e);
+        InjectedWheelQuarantine.Stop();
         _hook?.Dispose();
         _hotkey?.Dispose();
         _engine?.Dispose();

@@ -1,3 +1,16 @@
+## 2026-07-24 - Quarantine Synergy residual wheel during Mac 4-finger gestures
+
+**Symptom:** 4-finger swipe up/down (BTT → AHK Task View) also dumped a Synergy
+wheel burst into Windows. An AHK Wheel* mute tripped MaxHotkeysPerInterval
+(~70 events/1.3s) and froze the gesture listener.
+
+**Fix:** SoftScroll drops injected-only wheel for ~450ms when AHK signals named
+event Local\SoftScroll_QuarantineInjectedWheel. Real hardware scroll untouched.
+Do not reintroduce AHK Wheel hotkeys.
+
+**Files:** Core/InjectedWheelQuarantine.cs, App.xaml.cs; AHK QuarantineSoftScrollWheel.
+
+---
 # Lessons Learned
 
 Persistent knowledge base for SoftScroll project. Read at the start of every session.
