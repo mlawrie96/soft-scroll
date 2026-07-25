@@ -4,11 +4,26 @@
 wheel burst into Windows. An AHK Wheel* mute tripped MaxHotkeysPerInterval
 (~70 events/1.3s) and froze the gesture listener.
 
-**Fix:** SoftScroll drops injected-only wheel for ~450ms when AHK signals named
-event Local\SoftScroll_QuarantineInjectedWheel. Real hardware scroll untouched.
+**Fix:** SoftScroll drops injected-only wheel for ~900ms when AHK signals named
+event Local\SoftScroll_QuarantineInjectedWheel and/or writes TickCount deadline
+to %AppData%\SoftScroll\gesture_wheel_quarantine_until.txt (A_TickCount ==
+Environment.TickCount64 lower bits). Real hardware scroll untouched.
 Do not reintroduce AHK Wheel hotkeys.
 
+**Ops:** SoftScroll must be running (`%LocalAppData%\SoftScroll\SoftScroll.exe`)
+or Synergy residual scroll has no quarantine. Watcher logs drop counts off the
+hook thread — never log synchronously from ShouldDrop.
+
 **Files:** Core/InjectedWheelQuarantine.cs, App.xaml.cs; AHK QuarantineSoftScrollWheel.
+
+---
+## 2026-07-24 - Quarantine duration + drop-count logging
+
+**Why:** 450ms was short for Synergy residual after 4-finger; SoftScroll was also
+found not running during verification (jumps look like “quarantine failed”).
+
+**Change:** DurationMs 900; AHK A_TickCount+900; async drop-count flush from
+watcher; file-arm logging. Verified: event+file arm + 8/8 SendInput drops.
 
 ---
 # Lessons Learned

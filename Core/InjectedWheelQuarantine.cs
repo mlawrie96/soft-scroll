@@ -12,13 +12,18 @@ namespace SoftScroll.Core;
 /// Signals (either works):
 /// 1. Named AutoReset event Local\SoftScroll_QuarantineInjectedWheel
 /// 2. File %AppData%\SoftScroll\gesture_wheel_quarantine_until.txt containing
-///    a TickCount64 deadline (AHK writes this — more reliable than OpenEvent).
+///    a GetTickCount / TickCount64 deadline (AHK A_TickCount — same clock as
+///    Environment.TickCount64 while uptime &lt; ~24.8 days).
+///
+/// Hot-path rule: never log synchronously from ShouldDrop (WH_MOUSE_LL). Drop
+/// counts are flushed from the watcher thread.
 /// </summary>
 public static class InjectedWheelQuarantine
 {
     public const string EventName = @"Local\SoftScroll_QuarantineInjectedWheel";
 
-    public static long DurationMs { get; set; } = 450;
+    /// <summary>How long to swallow injected wheel after a gesture signal.</summary>
+    public static long DurationMs { get; set; } = 900;
 
     private static long _untilTick;
     private static EventWaitHandle? _evt;
@@ -26,6 +31,9 @@ public static class InjectedWheelQuarantine
     private static volatile bool _running;
     private static string? _filePath;
     private static long _lastFileReadMs;
+    private static long _dropCount;
+    private static long _lastFlushedDrops;
+    private static long _lastLoggedFileDeadline;
 
     public static void Start()
     {
@@ -60,20 +68,26 @@ public static class InjectedWheelQuarantine
         try { _evt?.Set(); } catch { /* ignore */ }
         try { _evt?.Dispose(); } catch { /* ignore */ }
         _evt = null;
+        FlushDropCount();
     }
 
     public static bool ShouldDrop(bool isInjected)
     {
         if (!isInjected) return false;
         RefreshFromFile();
-        return Environment.TickCount64 < Interlocked.Read(ref _untilTick);
+        if (Environment.TickCount64 >= Interlocked.Read(ref _untilTick))
+            return false;
+        Interlocked.Increment(ref _dropCount);
+        return true;
     }
 
     private static void Arm(long durationMs, string source)
     {
         var until = Environment.TickCount64 + durationMs;
         Interlocked.Exchange(ref _untilTick, until);
-        Serilog.Log.Information("[InjectedWheelQuarantine] armed via {Source} until={Until}", source, until);
+        Serilog.Log.Information(
+            "[InjectedWheelQuarantine] armed via {Source} until={Until} durationMs={Ms} tickNow={Now}",
+            source, until, durationMs, Environment.TickCount64);
     }
 
     private static void RefreshFromFile()
@@ -85,13 +99,49 @@ public static class InjectedWheelQuarantine
         {
             if (_filePath == null || !File.Exists(_filePath)) return;
             var text = File.ReadAllText(_filePath).Trim();
-            if (long.TryParse(text, out var until) && until > Interlocked.Read(ref _untilTick))
+            if (!long.TryParse(text, out var until)) return;
+
+            // Same clock as AHK A_TickCount / GetTickCount (lower 32 bits of TickCount64).
+            if (until > Interlocked.Read(ref _untilTick))
                 Interlocked.Exchange(ref _untilTick, until);
         }
         catch
         {
             /* ignore */
         }
+    }
+
+    /// <summary>Watcher-only: log new file deadlines without touching the hook path.</summary>
+    private static void LogNewFileArmIfAny()
+    {
+        try
+        {
+            if (_filePath == null || !File.Exists(_filePath)) return;
+            var text = File.ReadAllText(_filePath).Trim();
+            if (!long.TryParse(text, out var until)) return;
+            if (until == _lastLoggedFileDeadline) return;
+            if (until <= Environment.TickCount64) return; // stale
+            _lastLoggedFileDeadline = until;
+            Serilog.Log.Information(
+                "[InjectedWheelQuarantine] armed via file until={Until} remainingMs={Rem} tickNow={Now}",
+                until, until - Environment.TickCount64, Environment.TickCount64);
+        }
+        catch
+        {
+            /* ignore */
+        }
+    }
+
+    private static void FlushDropCount()
+    {
+        var total = Interlocked.Read(ref _dropCount);
+        var prev = Interlocked.Read(ref _lastFlushedDrops);
+        if (total == prev) return;
+        Interlocked.Exchange(ref _lastFlushedDrops, total);
+        var delta = total - prev;
+        Serilog.Log.Information(
+            "[InjectedWheelQuarantine] dropped {Delta} injected wheel event(s) (sessionTotal={Total}) until={Until} tickNow={Now}",
+            delta, total, Interlocked.Read(ref _untilTick), Environment.TickCount64);
     }
 
     private static void WatchLoop()
@@ -106,6 +156,8 @@ public static class InjectedWheelQuarantine
                 if (signaled)
                     Arm(DurationMs, "event");
                 RefreshFromFile();
+                LogNewFileArmIfAny();
+                FlushDropCount();
             }
             catch (ObjectDisposedException) { break; }
             catch (Exception ex)
