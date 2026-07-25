@@ -11,9 +11,9 @@
     <!-- Branding -->
     <AssemblyName>SoftScroll</AssemblyName>
     <RootNamespace>SoftScroll</RootNamespace>
-    <Product>Soft Scroll</Product>
+    <Product>ml-soft-scroll</Product>
     <Company>Soft Scroll</Company>
-    <Description>Soft Scroll brings smooth, configurable scrolling to Windows.</Description>
+    <Description>Soft Scroll brings smooth, configurable scrolling to Windows. Custom build: injected-input (Synergy/KVM) fix, not the official release.</Description>
     <Version>0.4.1</Version>
 
     <!-- App executable icon -->

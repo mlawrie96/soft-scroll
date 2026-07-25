@@ -158,7 +158,7 @@
   <data name="TrayTouchpadActive" xml:space="preserve"><value>Touchpad Active</value></data>
   <data name="TrayToggleHotkey" xml:space="preserve"><value>Toggle with Ctrl+Alt+S</value></data>
   <data name="TrayExit" xml:space="preserve"><value>Exit</value></data>
-  <data name="AppName" xml:space="preserve"><value>Soft Scroll</value></data>
+  <data name="AppName" xml:space="preserve"><value>ml-soft-scroll</value></data>
 
   <!-- Footer -->
   <data name="FooterHint" xml:space="preserve"><value>Changes are applied when you click Save.</value></data>
