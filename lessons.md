@@ -32,6 +32,62 @@ Persistent knowledge base for SoftScroll project. Read at the start of every ses
 
 ---
 
+## 2026-07-25 — Flat InjectedWheelScale replaced with rate-adaptive scale
+
+### Symptom
+
+The flat `InjectedWheelScale` multiplier (see "Injected-input acceleration ramp" entry) reduced
+trackpad-over-Synergy sensitivity but applied identically to *all* injected input — including a
+Synergy-forwarded real mouse, which didn't have the sensitivity problem in the first place. User
+reported the two no longer felt aligned, and asked for something as principled as the arrival-time
+acceleration fix rather than a guessed constant.
+
+### Root cause / why a flat scale was the wrong shape
+
+Confirmed by reading Deskflow's macOS capture source directly (`OSXScreen.mm`,
+`handleCGInputEvent`/`onMouseWheel`): `CGEventGetIntegerValueField(event, kCGScrollWheelEventIsContinuous)`
+— the macOS API flag that distinguishes continuous-scroll devices (trackpads) from notched mouse
+wheels — is never read anywhere in the capture path, and `kMsgDMouseWheel` has no field for it either.
+Device-type information isn't dropped somewhere in the pipeline — it never exists in the first place.
+A real fix at the protocol level would require patching Deskflow itself on **both** the macOS and
+Windows ends (new CGEvent read, new WheelInfo field, new/extended wire message, both `ClientProxy1_3.cpp`
+and `ServerProxy.cpp`), which is a cross-project undertaking out of scope here.
+
+### The fix
+
+Infer device character from behavior instead of an explicit signal. Trackpads forwarded through the
+KVM sustain a materially higher, steadier notch rate than a mouse wheel (macOS emits one wheel message
+per scroll callback at 60-120Hz with no batching; a mouse produces bursty, lower-rate notches). Track a
+smoothed (EWMA) inter-arrival gap for injected notches only, and derive the scale from that instead of
+a constant:
+
+- Gap ≥ `InjectedMouseLikeGapMs` (default 80ms) → scale = 1.0 (untouched, looks like a real mouse).
+- Gap ≤ `InjectedTrackpadLikeGapMs` (default 20ms) → scale = `InjectedWheelScale` (the dampened floor).
+- Linear interpolation between the two.
+
+This lets a Synergy-forwarded mouse and a Synergy-forwarded trackpad each settle at their own natural
+scale automatically, without needing to know which one is actually connected.
+
+### Architectural rule going forward
+
+**When a needed signal isn't available in a third-party protocol, check whether it's genuinely absent
+or just unused before building around its absence — then infer from an observable behavioral proxy
+rather than a guessed constant, the same way the arrival-time acceleration fix used real timing instead
+of assuming.** A flat magic-number scale is always the weaker fix when *any* distinguishing behavioral
+signal is available, even an indirect one.
+
+### Files changed
+
+- `Core/SmoothScrollEngine.cs` — `Axis` tracks a smoothed injected inter-notch gap; `RegisterNotch`
+  derives `injectedScale` from it via new `ComputeInjectedScale`, replacing the flat multiplier.
+- `Settings/AppSettings.cs`, `Settings/SettingsViewModel.cs` — added `InjectedMouseLikeGapMs` /
+  `InjectedTrackpadLikeGapMs` alongside the existing `InjectedWheelScale` (now the dampened floor
+  rather than a flat multiplier).
+
+---
+
+---
+
 ## 2026-07-24 — Injected-input acceleration ramp caused overscroll over Synergy
 
 ### Symptom

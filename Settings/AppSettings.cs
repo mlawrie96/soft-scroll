@@ -45,6 +45,34 @@ public sealed class AppSettings
     /// </summary>
     public bool ReverseInjectedWheelDirection { get; set; } = false;
 
+    /// <summary>
+    /// Floor scale applied to injected wheel notches whose arrival rate looks
+    /// continuous/trackpad-like (see InjectedMouseLikeGapMs/
+    /// InjectedTrackpadLikeGapMs). 1.0 = no change. Independent of hardware.
+    /// Continuous devices (trackpads) forwarded over a KVM register far more
+    /// discrete notches per physical gesture than a mouse wheel does, since
+    /// macOS/Synergy convert every scroll callback into its own wheel message
+    /// with no batching — each notch still contributes a full StepSizePx, so
+    /// without scaling this down, KVM-forwarded trackpad scrolling reads as
+    /// much more sensitive than the same gesture on a direct-plugged mouse.
+    /// </summary>
+    public double InjectedWheelScale { get; set; } = 1.0;
+
+    /// <summary>
+    /// Smoothed inter-notch gap (ms) at or above which an injected wheel
+    /// stream is treated as mouse-like (bursty, lower rate) and left at full
+    /// scale (1.0). Synergy has no device-type bit in its wire protocol, so
+    /// this infers it from arrival-rate behavior instead.
+    /// </summary>
+    public int InjectedMouseLikeGapMs { get; set; } = 80;
+
+    /// <summary>
+    /// Smoothed inter-notch gap (ms) at or below which an injected wheel
+    /// stream is treated as continuous/trackpad-like (sustained high
+    /// frequency) and dampened to InjectedWheelScale.
+    /// </summary>
+    public int InjectedTrackpadLikeGapMs { get; set; } = 20;
+
     // ── Startup & UI ────────────────────────────────────────────────
     public bool StartWithWindows { get; set; } = false;
     public bool StartMinimized { get; set; } = true;
@@ -163,6 +191,9 @@ public sealed class AppSettings
         TailToHeadRatio = Math.Clamp(TailToHeadRatio, 1, 20);
         MomentumFriction = Math.Clamp(MomentumFriction, 0, 100);
         MiddleClickDeadZone = Math.Clamp(MiddleClickDeadZone, 0, 100);
+        InjectedWheelScale = Math.Clamp(InjectedWheelScale, 0.05, 5.0);
+        InjectedMouseLikeGapMs = Math.Clamp(InjectedMouseLikeGapMs, 1, 2000);
+        InjectedTrackpadLikeGapMs = Math.Clamp(InjectedTrackpadLikeGapMs, 1, InjectedMouseLikeGapMs);
 
         if (!LocalizationManager.SupportedLanguages.Contains(Language))
             Language = "en";

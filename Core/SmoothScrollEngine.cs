@@ -308,6 +308,14 @@ public sealed class SmoothScrollEngine : IDisposable
         public bool InMomentum;
         private double _momentumAccum;
 
+        // EWMA of inter-arrival gap for injected notches only, used to infer
+        // whether an injected stream behaves like a real mouse wheel (bursty,
+        // larger gaps) or a continuous device -- a trackpad -- forwarded
+        // through the KVM (sustained 60-120Hz stream, small gaps). See
+        // ComputeInjectedScale.
+        private double _injectedAvgGapMs;
+        private const double InjectedGapSmoothing = 0.25;
+
         public void RegisterNotch(long nowMs, int delta, AppSettings s, bool isInjected = false)
         {
             // Cancel momentum on new user input
@@ -317,6 +325,9 @@ public sealed class SmoothScrollEngine : IDisposable
                 Velocity = 0;
                 _momentumAccum = 0;
             }
+
+            var timeSinceLast = nowMs - LastNotchTime;
+            var injectedScale = 1.0;
 
             if (isInjected)
             {
@@ -329,8 +340,32 @@ public sealed class SmoothScrollEngine : IDisposable
                 // this source, so injected notches never ramp acceleration —
                 // avoiding an artificial multi-x overscroll on bursty delivery.
                 AccelFactor = 1;
+
+                // Synergy has no device-type bit in its wire protocol at all
+                // (verified against its source: macOS capture never reads
+                // kCGScrollWheelEventIsContinuous, so nothing downstream could
+                // use it even if we wanted to). Continuous devices (trackpads)
+                // still behave distinctly from mouse wheels in one way we CAN
+                // observe here: macOS/Synergy convert every scroll callback
+                // (60-120Hz, no batching) into its own wheel message, so a
+                // trackpad swipe sustains a much higher, steadier notch rate
+                // than a mouse wheel ever produces. Track a smoothed
+                // inter-arrival gap and derive the scale from THAT — sustained
+                // fast arrival (trackpad-like) gets dampened toward
+                // InjectedWheelScale; slower/burstier arrival (mouse-like) is
+                // left close to 1.0. This lets a Synergy-forwarded mouse and a
+                // Synergy-forwarded trackpad each find their own natural scale
+                // instead of both being forced through one flat constant.
+                if (timeSinceLast > 0 && timeSinceLast < 2000)
+                {
+                    _injectedAvgGapMs = _injectedAvgGapMs <= 0
+                        ? timeSinceLast
+                        : _injectedAvgGapMs * (1 - InjectedGapSmoothing) + timeSinceLast * InjectedGapSmoothing;
+                }
+
+                injectedScale = ComputeInjectedScale(_injectedAvgGapMs, s);
             }
-            else if (nowMs - LastNotchTime <= s.AccelerationDeltaMs)
+            else if (timeSinceLast <= s.AccelerationDeltaMs)
             {
                 AccelFactor = Math.Min(s.AccelerationMax, Math.Max(1, AccelFactor + 1));
             }
@@ -339,11 +374,10 @@ public sealed class SmoothScrollEngine : IDisposable
                 AccelFactor = 1;
             }
 
-            var timeSinceLast = nowMs - LastNotchTime;
             LastNotchTime = nowMs;
 
             var notches = delta / (double)WHEEL_DELTA;
-            var rawPixels = notches * s.StepSizePx * AccelFactor;
+            var rawPixels = notches * s.StepSizePx * AccelFactor * injectedScale;
             // Ceiling at the max a single genuine hardware notch could ever
             // produce (one notch at max acceleration). A no-op for hardware
             // (which can't exceed this today), a safety net for injected input
@@ -359,6 +393,24 @@ public sealed class SmoothScrollEngine : IDisposable
             {
                 Velocity = pixels / timeSinceLast;
             }
+        }
+
+        /// <summary>
+        /// Maps a smoothed inter-notch gap (ms) to a scale factor: gaps at or
+        /// above InjectedMouseLikeGapMs (bursty, mouse-like cadence) return 1.0
+        /// (untouched); gaps at or below InjectedTrackpadLikeGapMs (sustained
+        /// high-frequency, trackpad-like) return InjectedWheelScale (the
+        /// dampened floor); linear interpolation between the two.
+        /// </summary>
+        private static double ComputeInjectedScale(double avgGapMs, AppSettings s)
+        {
+            if (avgGapMs <= 0) return 1.0; // no data yet (first notch) — don't touch it
+            if (avgGapMs >= s.InjectedMouseLikeGapMs) return 1.0;
+            if (avgGapMs <= s.InjectedTrackpadLikeGapMs) return s.InjectedWheelScale;
+
+            var span = s.InjectedMouseLikeGapMs - s.InjectedTrackpadLikeGapMs;
+            var t = (avgGapMs - s.InjectedTrackpadLikeGapMs) / (double)span;
+            return s.InjectedWheelScale + t * (1.0 - s.InjectedWheelScale);
         }
 
         public int Step(double dtMs, AppSettings s)

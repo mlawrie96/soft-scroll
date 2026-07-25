@@ -31,6 +31,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         HorizontalSmoothness = s.HorizontalSmoothness;
         ReverseWheelDirection = s.ReverseWheelDirection;
         ReverseInjectedWheelDirection = s.ReverseInjectedWheelDirection;
+        InjectedWheelScale = s.InjectedWheelScale;
+        InjectedMouseLikeGapMs = s.InjectedMouseLikeGapMs;
+        InjectedTrackpadLikeGapMs = s.InjectedTrackpadLikeGapMs;
         StartWithWindows = s.StartWithWindows;
         StartMinimized = s.StartMinimized;
         ZoomSmoothing = s.ZoomSmoothing;
@@ -96,6 +99,9 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         HorizontalSmoothness = HorizontalSmoothness,
         ReverseWheelDirection = ReverseWheelDirection,
         ReverseInjectedWheelDirection = ReverseInjectedWheelDirection,
+        InjectedWheelScale = InjectedWheelScale,
+        InjectedMouseLikeGapMs = InjectedMouseLikeGapMs,
+        InjectedTrackpadLikeGapMs = InjectedTrackpadLikeGapMs,
         StartWithWindows = StartWithWindows,
         StartMinimized = StartMinimized,
         Language = Language,
@@ -186,6 +192,15 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
 
     private bool _reverseInjected;
     public bool ReverseInjectedWheelDirection { get => _reverseInjected; set { if (Set(ref _reverseInjected, value)) OnSettingsChanged(); } }
+
+    private double _injectedWheelScale = 1.0;
+    public double InjectedWheelScale { get => _injectedWheelScale; set { if (Set(ref _injectedWheelScale, value)) OnSettingsChanged(); } }
+
+    private int _injectedMouseLikeGapMs = 80;
+    public int InjectedMouseLikeGapMs { get => _injectedMouseLikeGapMs; set { if (Set(ref _injectedMouseLikeGapMs, value)) OnSettingsChanged(); } }
+
+    private int _injectedTrackpadLikeGapMs = 20;
+    public int InjectedTrackpadLikeGapMs { get => _injectedTrackpadLikeGapMs; set { if (Set(ref _injectedTrackpadLikeGapMs, value)) OnSettingsChanged(); } }
 
     private bool _startWithWindows;
     public bool StartWithWindows { get => _startWithWindows; set { if (Set(ref _startWithWindows, value)) OnSettingsChanged(); } }
