@@ -4,6 +4,98 @@ Persistent knowledge base for SoftScroll project. Read at the start of every ses
 
 ---
 
+## 2026-07-24 — Injected-input acceleration ramp caused overscroll over Synergy
+
+### Symptom
+
+After the injected-event pipeline fix (previous entry), Synergy-forwarded scroll got smoothing and
+correct reversal, but occasionally jumped much farther than the same physical gesture on a
+direct-plugged mouse — not constant, intermittent bursts of overscroll.
+
+### Root cause analysis
+
+Confirmed by reading Synergy/Barrier/Input Leap/Deskflow's actual source (shared C++ codebase across
+all four names): the wire protocol (`kMsgDMouseWheel`) carries only `xDelta`/`yDelta`, no timestamp.
+The client's `ServerProxy::handle_data()` drains every buffered message in one unpaced synchronous
+loop on each socket-readable event — so when network jitter delays a few messages, they arrive at
+Soft Scroll's hook essentially simultaneously, even though the user scrolled at a normal cadence on
+the server side. `Axis.RegisterNotch`'s acceleration ramp (`nowMs - LastNotchTime <= AccelerationDeltaMs`
+→ ramp `AccelFactor` up to `AccelerationMax`) treats Windows-local arrival time as a proxy for
+physical scroll speed — an assumption that only holds for real hardware, where the hook sees every
+notch as it's actually generated. For injected input there is no floor/threshold fix: a burst can
+compress N genuinely-separate notches into sub-millisecond arrival gaps regardless of what
+`AccelerationDeltaMs` is set to, because the timing information was never transmitted in the first
+place. Synergy also applies its own scroll-speed multiplier (macOS server's `getScrollSpeed()`, and
+the client's configurable `XScrollScale`/`YScrollScale`, up to 10x) before Soft Scroll ever sees the
+delta, which can compound the effect.
+
+### The fix
+
+1. `Axis.RegisterNotch` now takes `isInjected`. When true, `AccelFactor` is forced to `1` — injected
+   notches never ramp acceleration from arrival-time clustering.
+2. A hard ceiling on any single notch's pixel contribution: `Math.Clamp(rawPixels, -maxPixels,
+   maxPixels)` where `maxPixels = StepSizePx * AccelerationMax` — the same maximum a single real
+   hardware notch could already produce at full acceleration. No-op for hardware (can't exceed this
+   today), but a safety net for injected input against any other compounding cause (KVM-side
+   pre-scaling, duplicate delivery) without needing to fully diagnose which one is in play.
+3. Momentum/velocity tracking (`Velocity = pixels / timeSinceLast`) also now skips injected notches,
+   for the same reason — timeSinceLast for a burst can be near-zero, which would otherwise produce an
+   absurd velocity value feeding into the momentum phase.
+
+Deliberately did NOT add diagnostic logging in the hot path (`RegisterNotch` runs synchronously on the
+low-level-hook callback thread; Windows can silently detach a slow-to-respond `WH_MOUSE_LL` hook, and
+synchronous file I/O there risks reintroducing exactly the kind of mysterious "stopped working"
+symptom this whole investigation started from). If future diagnosis needs event-level tracing, buffer
+in memory and flush asynchronously off the hook thread — never log synchronously from inside
+`RegisterNotch`/`HookCallback`.
+
+### Architectural rule going forward
+
+**Never use Windows-local arrival time as a proxy for physical input timing when the source is
+injected.** Only real hardware, dispatched through the OS's own input stack, has arrival time that
+faithfully tracks generation time. Any synthetic/injected source (KVMs, RDP, automation, virtual
+machines) may buffer, batch, or replay with no timing fidelity, and no protocol assumption should be
+made about it without checking that specific source's actual wire behavior first — as was done here
+by reading Synergy/Deskflow's source directly rather than guessing.
+
+### Files changed
+
+- `Core/SmoothScrollEngine.cs` — `Axis.RegisterNotch` gains `isInjected` param; forces `AccelFactor=1`
+  and skips momentum/velocity tracking for injected notches; adds the per-notch pixel ceiling.
+
+---
+
+## 2026-07-24 — AutoDisableOnTouchpad silently broken by a GetRawInputDeviceList return-value bug
+
+### Symptom
+
+Found incidentally while auditing logs for the Synergy overscroll issue above: every single app
+launch logged `[InputDetector] Failed to enumerate devices: 21` — a warning, with the same "error
+code" every time, on 5/5 sessions in the day's log.
+
+### Root cause
+
+`InputDeviceDetector.EnumerateDevices()` calls `GetRawInputDeviceList` twice. The first call (buffer =
+`null`) correctly expects `0` on success per Win32 semantics — that call is just asking for the
+required count. The second call (buffer = actual array) instead returns **the number of elements
+copied** on success, not `0` — only `(UINT)-1` indicates failure. The code checked `result != 0` on
+the second call too, so every successful enumeration (returning the real device count, e.g. `21`) was
+misread as a failure, logged a warning, and returned early — before `_knownTouchpadHandles` /
+`_knownMouseHandles` were ever populated. Net effect: `AutoDisableOnTouchpad`'s primary detection path
+(`fTouchPad` via `RID_DEVICE_INFO`) was dead on every launch, silently falling back to the much weaker
+timeout-based heuristic in `CheckDeviceState()`, for as long as this bug existed.
+
+### The fix
+
+Changed the second call's success check from `result != 0` to `result == unchecked((uint)-1)`,
+matching actual Win32 semantics for a populated-buffer call.
+
+### Files changed
+
+- `Core/InputDeviceDetector.cs` — corrected the second `GetRawInputDeviceList` result check.
+
+---
+
 ## 2026-07-24 — Blanket injected-event skip breaks software KVMs (Synergy/Barrier/Input Leap)
 
 ### Symptom

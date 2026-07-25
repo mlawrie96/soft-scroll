@@ -112,7 +112,7 @@ public sealed class SmoothScrollEngine : IDisposable
             // shares the hardware path's convention — apply this independently.
             if (isInjected && _s.ReverseInjectedWheelDirection) dir *= -1;
             var now = Environment.TickCount64;
-            _v.RegisterNotch(now, delta * dir, _s);
+            _v.RegisterNotch(now, delta * dir, _s, isInjected);
             _lastAxis = ScrollAxis.Vertical;
         }
         _signal.Set();
@@ -308,7 +308,7 @@ public sealed class SmoothScrollEngine : IDisposable
         public bool InMomentum;
         private double _momentumAccum;
 
-        public void RegisterNotch(long nowMs, int delta, AppSettings s)
+        public void RegisterNotch(long nowMs, int delta, AppSettings s, bool isInjected = false)
         {
             // Cancel momentum on new user input
             if (InMomentum)
@@ -318,20 +318,44 @@ public sealed class SmoothScrollEngine : IDisposable
                 _momentumAccum = 0;
             }
 
-            if (nowMs - LastNotchTime <= s.AccelerationDeltaMs)
-                AccelFactor = Math.Min(s.AccelerationMax, Math.Max(1, AccelFactor + 1));
-            else
+            if (isInjected)
+            {
+                // Third-party injected input (software KVMs like Synergy/Barrier/
+                // Input Leap, RDP, automation tools) has no timing guarantees:
+                // their wire protocols carry no original event timestamp, and
+                // network jitter can deliver several genuinely-separate physical
+                // notches to this hook in a tight burst. Windows-local arrival
+                // time is not a trustworthy proxy for physical scroll speed for
+                // this source, so injected notches never ramp acceleration —
+                // avoiding an artificial multi-x overscroll on bursty delivery.
                 AccelFactor = 1;
+            }
+            else if (nowMs - LastNotchTime <= s.AccelerationDeltaMs)
+            {
+                AccelFactor = Math.Min(s.AccelerationMax, Math.Max(1, AccelFactor + 1));
+            }
+            else
+            {
+                AccelFactor = 1;
+            }
 
             var timeSinceLast = nowMs - LastNotchTime;
             LastNotchTime = nowMs;
 
             var notches = delta / (double)WHEEL_DELTA;
-            var pixels = notches * s.StepSizePx * AccelFactor;
+            var rawPixels = notches * s.StepSizePx * AccelFactor;
+            // Ceiling at the max a single genuine hardware notch could ever
+            // produce (one notch at max acceleration). A no-op for hardware
+            // (which can't exceed this today), a safety net for injected input
+            // against bursty delivery, KVM-side pre-scaling, or duplicate replay.
+            var maxPixels = s.StepSizePx * s.AccelerationMax;
+            var pixels = Math.Clamp(rawPixels, -maxPixels, maxPixels);
             RemainingPx += pixels;
 
-            // Track velocity for momentum
-            if (s.MomentumEnabled && timeSinceLast > 0 && timeSinceLast < 500)
+            // Injected-source timing can't be trusted for velocity either, for
+            // the same reason as the acceleration ramp above — only real
+            // hardware input feeds momentum.
+            if (!isInjected && s.MomentumEnabled && timeSinceLast > 0 && timeSinceLast < 500)
             {
                 Velocity = pixels / timeSinceLast;
             }
