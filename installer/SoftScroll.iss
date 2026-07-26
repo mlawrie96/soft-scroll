@@ -2,7 +2,7 @@
 ; Inno Setup 6.x
 
 #define MyAppName "Soft Scroll"
-#define MyAppVersion "0.6.1"
+#define MyAppVersion "0.6.2"
 #define MyAppPublisher "Soft Scroll"
 #define MyAppURL "https://github.com/quangtruong2003/soft-scroll"
 #define MyAppExeName "SoftScroll.exe"
