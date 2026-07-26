@@ -4,6 +4,17 @@
   "max_entries": 50,
   "recent": [
     {
+      "created_at": "2026-07-26T13:19:01-0700",
+      "created_by": "cursor",
+      "title": "SoftScroll trackpad Synergy clamp shipped",
+      "slug": "softscroll-trackpad-synergy-clamp-shipped",
+      "path": ".cursor/handoffs/2026-07-26_1319__softscroll-trackpad-synergy-clamp-shipped.md",
+      "git": {
+        "branch": "main",
+        "commit": "a1002f4"
+      }
+    },
+    {
       "created_at": "2026-07-24T23:32:54-0700",
       "created_by": "cursor",
       "title": "SoftScroll Synergy quarantine 900ms shipped",
