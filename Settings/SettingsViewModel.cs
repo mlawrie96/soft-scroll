@@ -34,6 +34,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         InjectedWheelScale = s.InjectedWheelScale;
         InjectedMouseLikeGapMs = s.InjectedMouseLikeGapMs;
         InjectedTrackpadLikeGapMs = s.InjectedTrackpadLikeGapMs;
+        DiagnosticWheelLogging = s.DiagnosticWheelLogging;
         StartWithWindows = s.StartWithWindows;
         StartMinimized = s.StartMinimized;
         ZoomSmoothing = s.ZoomSmoothing;
@@ -102,6 +103,7 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
         InjectedWheelScale = InjectedWheelScale,
         InjectedMouseLikeGapMs = InjectedMouseLikeGapMs,
         InjectedTrackpadLikeGapMs = InjectedTrackpadLikeGapMs,
+        DiagnosticWheelLogging = DiagnosticWheelLogging,
         StartWithWindows = StartWithWindows,
         StartMinimized = StartMinimized,
         Language = Language,
@@ -193,14 +195,17 @@ public sealed class SettingsViewModel : INotifyPropertyChanged
     private bool _reverseInjected;
     public bool ReverseInjectedWheelDirection { get => _reverseInjected; set { if (Set(ref _reverseInjected, value)) OnSettingsChanged(); } }
 
-    private double _injectedWheelScale = 1.0;
+    private double _injectedWheelScale = 0.12;
     public double InjectedWheelScale { get => _injectedWheelScale; set { if (Set(ref _injectedWheelScale, value)) OnSettingsChanged(); } }
 
     private int _injectedMouseLikeGapMs = 80;
     public int InjectedMouseLikeGapMs { get => _injectedMouseLikeGapMs; set { if (Set(ref _injectedMouseLikeGapMs, value)) OnSettingsChanged(); } }
 
-    private int _injectedTrackpadLikeGapMs = 20;
+    private int _injectedTrackpadLikeGapMs = 60;
     public int InjectedTrackpadLikeGapMs { get => _injectedTrackpadLikeGapMs; set { if (Set(ref _injectedTrackpadLikeGapMs, value)) OnSettingsChanged(); } }
+
+    private bool _diagnosticWheelLogging;
+    public bool DiagnosticWheelLogging { get => _diagnosticWheelLogging; set { if (Set(ref _diagnosticWheelLogging, value)) OnSettingsChanged(); } }
 
     private bool _startWithWindows;
     public bool StartWithWindows { get => _startWithWindows; set { if (Set(ref _startWithWindows, value)) OnSettingsChanged(); } }

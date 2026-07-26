@@ -56,7 +56,7 @@ public sealed class AppSettings
     /// without scaling this down, KVM-forwarded trackpad scrolling reads as
     /// much more sensitive than the same gesture on a direct-plugged mouse.
     /// </summary>
-    public double InjectedWheelScale { get; set; } = 1.0;
+    public double InjectedWheelScale { get; set; } = 0.12;
 
     /// <summary>
     /// Smoothed inter-notch gap (ms) at or above which an injected wheel
@@ -69,9 +69,18 @@ public sealed class AppSettings
     /// <summary>
     /// Smoothed inter-notch gap (ms) at or below which an injected wheel
     /// stream is treated as continuous/trackpad-like (sustained high
-    /// frequency) and dampened to InjectedWheelScale.
+    /// frequency) and dampened to InjectedWheelScale. Tuned to 60ms from
+    /// measured Mac Studio + Synergy trackpad EWMA (often 40-70ms); the
+    /// prior 20ms floor rarely engaged on this hardware.
     /// </summary>
-    public int InjectedTrackpadLikeGapMs { get; set; } = 20;
+    public int InjectedTrackpadLikeGapMs { get; set; } = 60;
+
+    /// <summary>
+    /// When true, enqueue per-notch wheel diagnostics off the hook path and
+    /// flush them asynchronously to the Serilog debug log as [WheelDiag] lines.
+    /// Default off — hot path stays quiet for normal use.
+    /// </summary>
+    public bool DiagnosticWheelLogging { get; set; } = false;
 
     // ── Startup & UI ────────────────────────────────────────────────
     public bool StartWithWindows { get; set; } = false;

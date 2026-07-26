@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
+using Serilog;
 using SoftScroll.Native;
 using SoftScroll.Settings;
 
@@ -45,6 +47,14 @@ public sealed class SmoothScrollEngine : IDisposable
 
     private const double SPIN_WAIT_COUNT = 10;
     private const int IDLE_TIMEOUT_MS = 2000; // drop to 60fps after 2s idle
+
+    // Hot-path-safe diag buffer: enqueue from RegisterNotch (hook thread),
+    // flush from Worker (never Serilog from WH_MOUSE_LL).
+    private readonly record struct WheelDiagSample(
+        long TickMs, bool IsInjected, int Delta, double Notches,
+        long GapMs, double AvgGapMs, double Scale, int Accel, double Pixels);
+
+    private static readonly ConcurrentQueue<WheelDiagSample> WheelDiagQueue = new();
 
     public SmoothScrollEngine(AppSettings settings)
     {
@@ -166,6 +176,9 @@ public sealed class SmoothScrollEngine : IDisposable
                     remainingTotal = Math.Abs(_v.RemainingPx) + Math.Abs(_h.RemainingPx);
                 }
 
+                // Flush buffered [WheelDiag] samples off the hook thread.
+                FlushWheelDiag();
+
                 if (!workAvailable)
                 {
                     // Block until a wheel event signals us or timeout elapses.
@@ -223,6 +236,16 @@ public sealed class SmoothScrollEngine : IDisposable
 
         // Active scrolling: use target (display-matched) frame rate
         return _targetFrameMs;
+    }
+
+    private static void FlushWheelDiag()
+    {
+        while (WheelDiagQueue.TryDequeue(out var s))
+        {
+            Log.Debug(
+                "[WheelDiag] injected={Injected} delta={Delta} notches={Notches:F2} gap={GapMs} avgGap={AvgGapMs:F1} scale={Scale:F3} accel={Accel} px={Pixels:F1}",
+                s.IsInjected, s.Delta, s.Notches, s.GapMs, s.AvgGapMs, s.Scale, s.Accel, s.Pixels);
+        }
     }
 
     private static void SendWheel(int mouseData, int hMouseData)
@@ -316,6 +339,12 @@ public sealed class SmoothScrollEngine : IDisposable
         private double _injectedAvgGapMs;
         private const double InjectedGapSmoothing = 0.25;
 
+        // Once a stream looks trackpad-like, keep floor+notch-clamp armed for
+        // this long so a brief finger pause can't flip scale back to 1.0 and
+        // let the next fat Synergy burst through undamped.
+        private long _injectedTrackpadStickyUntil;
+        private const long InjectedTrackpadStickyMs = 400;
+
         public void RegisterNotch(long nowMs, int delta, AppSettings s, bool isInjected = false)
         {
             // Cancel momentum on new user input
@@ -328,6 +357,7 @@ public sealed class SmoothScrollEngine : IDisposable
 
             var timeSinceLast = nowMs - LastNotchTime;
             var injectedScale = 1.0;
+            var trackpadLike = false;
 
             if (isInjected)
             {
@@ -364,6 +394,25 @@ public sealed class SmoothScrollEngine : IDisposable
                 }
 
                 injectedScale = ComputeInjectedScale(_injectedAvgGapMs, s);
+
+                // Sticky trackpad: if we're at/near the floor, or already sticky,
+                // hold the floor through short pauses so EWMA can't briefly look
+                // "mouse-like" and unlock a full-scale multi-notch burst.
+                if (injectedScale <= s.InjectedWheelScale + 0.001
+                    || _injectedAvgGapMs > 0 && _injectedAvgGapMs <= s.InjectedTrackpadLikeGapMs)
+                {
+                    _injectedTrackpadStickyUntil = nowMs + InjectedTrackpadStickyMs;
+                }
+
+                if (nowMs < _injectedTrackpadStickyUntil)
+                {
+                    injectedScale = s.InjectedWheelScale;
+                    trackpadLike = true;
+                }
+                else if (injectedScale < 1.0)
+                {
+                    trackpadLike = true;
+                }
             }
             else if (timeSinceLast <= s.AccelerationDeltaMs)
             {
@@ -377,7 +426,18 @@ public sealed class SmoothScrollEngine : IDisposable
             LastNotchTime = nowMs;
 
             var notches = delta / (double)WHEEL_DELTA;
-            var rawPixels = notches * s.StepSizePx * AccelFactor * injectedScale;
+            // Synergy packs multiple wheel notches into one message (often
+            // delta=720 = 6 notches for both mouse and trackpad). Rate-based
+            // scale alone still leaves trackpad too hot because ~50 evt/s × 6
+            // notches dominates. When the stream looks trackpad-like, count
+            // each message as at most one notch, then apply the floor scale.
+            // Mouse-like injected (scale 1.0, not sticky) keeps full magnitude
+            // so Synergy-forwarded mice stay aligned with wired.
+            var effectiveNotches = notches;
+            if (trackpadLike && Math.Abs(notches) > 1.0)
+                effectiveNotches = Math.CopySign(1.0, notches);
+
+            var rawPixels = effectiveNotches * s.StepSizePx * AccelFactor * injectedScale;
             // Ceiling at the max a single genuine hardware notch could ever
             // produce (one notch at max acceleration). A no-op for hardware
             // (which can't exceed this today), a safety net for injected input
@@ -385,6 +445,15 @@ public sealed class SmoothScrollEngine : IDisposable
             var maxPixels = s.StepSizePx * s.AccelerationMax;
             var pixels = Math.Clamp(rawPixels, -maxPixels, maxPixels);
             RemainingPx += pixels;
+
+            // Buffer diag off the hook thread — never Serilog here (WH_MOUSE_LL
+            // can silently detach if the callback is slow). Worker flushes.
+            if (s.DiagnosticWheelLogging)
+            {
+                WheelDiagQueue.Enqueue(new WheelDiagSample(
+                    nowMs, isInjected, delta, effectiveNotches,
+                    timeSinceLast, _injectedAvgGapMs, injectedScale, AccelFactor, pixels));
+            }
 
             // Injected-source timing can't be trusted for velocity either, for
             // the same reason as the acceleration ramp above — only real

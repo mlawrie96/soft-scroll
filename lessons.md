@@ -32,6 +32,75 @@ Persistent knowledge base for SoftScroll project. Read at the start of every ses
 
 ---
 
+## 2026-07-26 — Trackpad-over-Synergy: rate scale alone insufficient; notch-clamp + sticky floor
+
+### Symptom
+
+After rate-adaptive `InjectedWheelScale` (2026-07-25 entry), Synergy-forwarded **mouse** felt
+aligned with a wired mouse on this PC, but Mac Studio **trackpad** via Synergy was still much too
+fast. A second tuning pass (raise `InjectedTrackpadLikeGapMs` 20→60, lower floor 0.3→0.12) made the
+floor engage most of the time, but steady trackpad was still ~2× hot and short pauses produced
+undamped bursts.
+
+### Measured data (Mac Studio → Synergy → this Windows SoftScroll box, Notepad)
+
+| Source | Typical delta/msg | Steady rate | Notes |
+|---|---|---|---|
+| Wired mouse | 120 (1 notch) | ~5–11 evt/s | Accel ramp 1–7 on flicks |
+| Synergy mouse | 720 (6 notches) | ~5 evt/s | Scale ≈ 1.0; feels ≈ wired |
+| Synergy trackpad | 720+ (often multi-k) | ~30–50 evt/s | Median gap ~16ms; EWMA often 40–70ms |
+
+With floor 0.12 but **no** notch clamp: trackpad ~4500 \|px\|/s vs wired mid ~1200–4400 (accel-dependent).
+Floor hit ~80%+ after gap threshold 60ms, but:
+
+1. Each Synergy message still contributed up to 6+ notches × scale before the pixel ceiling.
+2. Brief finger pauses grew EWMA toward “mouse,” scale snapped to 1.0, next fat burst went undamped.
+
+### Fix
+
+1. **`DiagnosticWheelLogging`** (default false): lock-free `ConcurrentQueue` sample in
+   `RegisterNotch`, flush `[WheelDiag]` from the engine worker — never Serilog on `WH_MOUSE_LL`.
+2. **Live tune (also C# defaults now):** `InjectedTrackpadLikeGapMs=60`, `InjectedWheelScale=0.12`,
+   `InjectedMouseLikeGapMs=80`.
+3. **Notch clamp when trackpad-like:** if sticky/floor/partial dampen (`trackpadLike`), treat each
+   injected message as at most **1 notch**, then apply floor scale. Mouse-like injected (scale 1.0,
+   not sticky) keeps full delta magnitude.
+4. **Sticky trackpad mode (~400ms):** once classified trackpad-like, force floor for 400ms so short
+   pauses cannot unlock full-scale multi-notch bursts.
+
+### Verification (user retest 2026-07-26 ~13:11)
+
+- Trackpad mid ~2200 \|px\|/s, ~91% at floor, 400 notch-clamped events — user: “much more reasonable,”
+  Synergy devices “totally passable.”
+- Wired still slightly smoother / farther on flicks because hardware still gets `AccelFactor` ramp;
+  injected intentionally does not (Synergy burst safety). Do not re-enable injected accel to chase
+  flick parity.
+- Optional micro-tweak later: floor 0.12→0.15 if trackpad feels shy after daily use. Not required now.
+
+### Architectural rule
+
+**Rate-based inference can choose *whether* to dampen, but Synergy’s packed multi-notch deltas mean
+you must also bound *how much work each message does* when dampening.** Pair a behavioral classifier
+with a per-message notch clamp and hysteresis (sticky mode). Prefer this over a custom Mac→Windows
+scroll protocol until SoftScroll-side fixes fail. Keep 4-finger BTT/AHK quarantine separate from
+continuous 2-finger scroll.
+
+### Files changed
+
+- `Core/SmoothScrollEngine.cs` — diag queue/flush; sticky trackpad; notch clamp; defaults consumed
+  from settings
+- `Settings/AppSettings.cs`, `Settings/SettingsViewModel.cs` — `DiagnosticWheelLogging`; defaults
+  `InjectedWheelScale=0.12`, `InjectedTrackpadLikeGapMs=60`
+- `.cursor/docs/summaries/2026-07-26-synergy-scroll-agent-brief.md` — handoff for MacBook scroll agent
+
+### Do not touch
+
+- `Core/InjectedWheelQuarantine.cs` / 4-finger gesture path (separate shipped feature)
+- Push to `origin` (`mlawrie96/soft-scroll`) — pending deletion; canonical remote is `personal`
+  (`mlawrie96/ml-soft-scroll`)
+
+---
+
 ## 2026-07-25 — Flat InjectedWheelScale replaced with rate-adaptive scale
 
 ### Symptom
