@@ -1,3 +1,45 @@
+## 2026-07-28 - Quarantine boot-reset bug: stale cross-boot deadline blocked all Synergy scroll for days
+
+**Symptom:** All Synergy-forwarded scroll (mouse and trackpad) stopped working entirely — not "too
+sensitive," completely dead. Log showed `[InjectedWheelQuarantine] dropped N injected wheel event(s)`
+firing continuously for 30+ minutes with an identical `until=270126603` on every line while `tickNow`
+climbed normally (~65M → 67M) — i.e. permanently "armed," nowhere near expiring.
+
+**Root cause:** `Environment.TickCount64` resets to 0 on every reboot, but
+`gesture_wheel_quarantine_until.txt` is a plain file on disk with no boot-scoping — it survives reboots.
+A deadline written during a previous, much longer uptime session (here, ~75h uptime, tick 270126603)
+persisted on disk across a later reboot. The new (shorter-uptime) session's `RefreshFromFile` read that
+old absolute tick value and, because it only ever ratchets `_untilTick` **upward** with no plausibility
+check (`if (until > _untilTick) Exchange(...)`), accepted it outright — arming a "quarantine" that
+wouldn't naturally expire until this boot session's own uptime organically reached 270M ms (~56 more
+hours from when it was found). `ShouldDrop` had no independent sanity check either, so once poisoned it
+stayed poisoned regardless of what the file said afterward.
+
+**Fix (restart-proof, not a one-time file deletion):**
+1. `Start()` now proactively deletes any leftover deadline file on every launch — there's no legitimate
+   reason one should already exist and be plausible at process start, since a real arm only ever happens
+   after this process is already running and AHK signals it live.
+2. `RefreshFromFile` and `ShouldDrop` both now reject any deadline more than `DurationMs +
+   PlausibilityMarginMs` (2000ms slop) in the future, independent of source — a stale file, a corrupted
+   write, or any future bug that tries to set an implausible `_untilTick` gets ignored rather than
+   trusted, instead of only ever being preventable by not writing the bad value in the first place.
+3. `LogNewFileArmIfAny` got the same implausibility check so it doesn't misreport a stale leftover as a
+   fresh, legitimate arm.
+
+Verified by deliberately planting an implausible deadline file (`999999999999`) before launch and
+confirming the log shows `Cleared stale deadline file on startup` and normal operation resumes — this
+reproduces the exact failure shape, not just a plausible-sounding theory.
+
+**Architectural rule:** any deadline/state that crosses a process or file boundary needs either (a)
+scoping to the session that's valid for it (e.g. a boot-unique ID), or (b) a plausibility bound checked
+at the point of use — "only ever move a value toward more permissive" (ratchet-up-only) is a trap whenever
+the value's source can outlive the assumptions that made it valid. Prefer (b) here: simpler, and it also
+protects against sources of badness other than reboots (corrupted writes, future bugs) for free.
+
+**Files:** `Core/InjectedWheelQuarantine.cs`.
+
+---
+
 ## 2026-07-24 - Quarantine Synergy residual wheel during Mac 4-finger gestures
 
 **Symptom:** 4-finger swipe up/down (BTT → AHK Task View) also dumped a Synergy

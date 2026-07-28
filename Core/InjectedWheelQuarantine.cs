@@ -13,7 +13,15 @@ namespace SoftScroll.Core;
 /// 1. Named AutoReset event Local\SoftScroll_QuarantineInjectedWheel
 /// 2. File %AppData%\SoftScroll\gesture_wheel_quarantine_until.txt containing
 ///    a GetTickCount / TickCount64 deadline (AHK A_TickCount — same clock as
-///    Environment.TickCount64 while uptime &lt; ~24.8 days).
+///    Environment.TickCount64 *within a single boot session*).
+///
+/// IMPORTANT: TickCount64 resets to 0 on every reboot, but this file is NOT
+/// boot-scoped -- it can persist across reboots with a deadline value from a
+/// much longer previous uptime, which would silently re-arm a stuck
+/// multi-day quarantine if trusted without a plausibility check. Both
+/// RefreshFromFile and ShouldDrop reject any deadline more than
+/// DurationMs+PlausibilityMarginMs in the future, and Start() proactively
+/// deletes any leftover file on launch. See lessons.md, "boot-reset bug".
 ///
 /// Hot-path rule: never log synchronously from ShouldDrop (WH_MOUSE_LL). Drop
 /// counts are flushed from the watcher thread.
@@ -24,6 +32,13 @@ public static class InjectedWheelQuarantine
 
     /// <summary>How long to swallow injected wheel after a gesture signal.</summary>
     public static long DurationMs { get; set; } = 900;
+
+    /// <summary>
+    /// Safety margin above DurationMs for the plausibility check below — real
+    /// arms are always "now + DurationMs"; this just tolerates normal
+    /// scheduling/IPC slop without being loose enough to accept garbage.
+    /// </summary>
+    private const long PlausibilityMarginMs = 2000;
 
     private static long _untilTick;
     private static EventWaitHandle? _evt;
@@ -52,6 +67,24 @@ public static class InjectedWheelQuarantine
             Serilog.Log.Warning(ex, "[InjectedWheelQuarantine] Failed to create event {Name}", EventName);
         }
 
+        // Self-heal on every launch: a leftover deadline file can only be
+        // stale (TickCount64 resets on every reboot; this file doesn't), so
+        // there's no legitimate reason for one to already exist and be
+        // plausible at process start. Clear it rather than let RefreshFromFile
+        // silently ignore-and-leave it for the lifetime of this run.
+        try
+        {
+            if (File.Exists(_filePath))
+            {
+                File.Delete(_filePath);
+                Serilog.Log.Information("[InjectedWheelQuarantine] Cleared stale deadline file on startup");
+            }
+        }
+        catch (Exception ex)
+        {
+            Serilog.Log.Warning(ex, "[InjectedWheelQuarantine] Failed to clear stale deadline file on startup");
+        }
+
         _watcher = new Thread(WatchLoop)
         {
             IsBackground = true,
@@ -75,7 +108,22 @@ public static class InjectedWheelQuarantine
     {
         if (!isInjected) return false;
         RefreshFromFile();
-        if (Environment.TickCount64 >= Interlocked.Read(ref _untilTick))
+
+        var now = Environment.TickCount64;
+        var until = Interlocked.Read(ref _untilTick);
+
+        // Defense-in-depth: never trust a stored deadline further in the
+        // future than DurationMs could plausibly produce, regardless of how
+        // it got set. Environment.TickCount64 resets to 0 on every reboot,
+        // but the file-based deadline is NOT boot-scoped -- a value written
+        // during a previous, much-longer uptime session (e.g. tick 270000000
+        // at ~75h uptime) can outlive a reboot on disk and, without this
+        // check, silently re-arm a multi-day "stuck" quarantine the moment
+        // this process starts back up and reads it. See lessons.md.
+        if (until - now > DurationMs + PlausibilityMarginMs)
+            return false;
+
+        if (now >= until)
             return false;
         Interlocked.Increment(ref _dropCount);
         return true;
@@ -101,7 +149,13 @@ public static class InjectedWheelQuarantine
             var text = File.ReadAllText(_filePath).Trim();
             if (!long.TryParse(text, out var until)) return;
 
-            // Same clock as AHK A_TickCount / GetTickCount (lower 32 bits of TickCount64).
+            // Same clock as AHK A_TickCount / GetTickCount (lower 32 bits of TickCount64)
+            // *within a single boot session* -- but the file itself persists across
+            // reboots, and TickCount64 resets to 0 on every boot. Reject anything
+            // implausibly far out instead of ratcheting up to it; a stale
+            // cross-boot leftover should be ignored, not honored for days.
+            if (until - now > DurationMs + PlausibilityMarginMs) return;
+
             if (until > Interlocked.Read(ref _untilTick))
                 Interlocked.Exchange(ref _untilTick, until);
         }
@@ -120,7 +174,9 @@ public static class InjectedWheelQuarantine
             var text = File.ReadAllText(_filePath).Trim();
             if (!long.TryParse(text, out var until)) return;
             if (until == _lastLoggedFileDeadline) return;
-            if (until <= Environment.TickCount64) return; // stale
+            var now = Environment.TickCount64;
+            if (until <= now) return; // stale (in the past)
+            if (until - now > DurationMs + PlausibilityMarginMs) return; // implausible (e.g. cross-boot leftover)
             _lastLoggedFileDeadline = until;
             Serilog.Log.Information(
                 "[InjectedWheelQuarantine] armed via file until={Until} remainingMs={Rem} tickNow={Now}",
