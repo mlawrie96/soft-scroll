@@ -67,22 +67,38 @@ public static class InjectedWheelQuarantine
             Serilog.Log.Warning(ex, "[InjectedWheelQuarantine] Failed to create event {Name}", EventName);
         }
 
-        // Self-heal on every launch: a leftover deadline file can only be
-        // stale (TickCount64 resets on every reboot; this file doesn't), so
-        // there's no legitimate reason for one to already exist and be
-        // plausible at process start. Clear it rather than let RefreshFromFile
-        // silently ignore-and-leave it for the lifetime of this run.
+        // Self-heal on every launch: a leftover deadline file is *usually* a
+        // stale cross-boot leftover (TickCount64 resets on every reboot; this
+        // file doesn't) -- but Windows gives no ordering guarantee between
+        // Startup entries, so AHK could legitimately start before this
+        // process and signal a real quarantine in that narrow window. Don't
+        // discard that: apply the same plausibility check used everywhere
+        // else, and only clear the file if it's actually stale/implausible.
         try
         {
             if (File.Exists(_filePath))
             {
-                File.Delete(_filePath);
-                Serilog.Log.Information("[InjectedWheelQuarantine] Cleared stale deadline file on startup");
+                var text = File.ReadAllText(_filePath).Trim();
+                var now = Environment.TickCount64;
+                var plausible = long.TryParse(text, out var until)
+                    && until > now
+                    && until - now <= DurationMs + PlausibilityMarginMs;
+                if (!plausible)
+                {
+                    File.Delete(_filePath);
+                    Serilog.Log.Information("[InjectedWheelQuarantine] Cleared stale/implausible deadline file on startup");
+                }
+                else
+                {
+                    Serilog.Log.Information(
+                        "[InjectedWheelQuarantine] Found plausible deadline file on startup (boot-race arm), honoring it: until={Until} tickNow={Now}",
+                        until, now);
+                }
             }
         }
         catch (Exception ex)
         {
-            Serilog.Log.Warning(ex, "[InjectedWheelQuarantine] Failed to clear stale deadline file on startup");
+            Serilog.Log.Warning(ex, "[InjectedWheelQuarantine] Failed to check/clear deadline file on startup");
         }
 
         _watcher = new Thread(WatchLoop)

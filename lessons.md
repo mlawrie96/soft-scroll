@@ -38,6 +38,19 @@ protects against sources of badness other than reboots (corrupted writes, future
 
 **Files:** `Core/InjectedWheelQuarantine.cs`.
 
+**Follow-up (same day):** the first version of `Start()`'s self-heal deleted *any* leftover deadline
+file unconditionally. Windows gives no ordering guarantee between Startup entries — AHK's gesture
+listener and Soft Scroll could both auto-start near boot in either order — so a genuinely fresh,
+still-valid quarantine signal written by AHK microseconds before Soft Scroll's own `Start()` ran would
+have been silently discarded. Confirmed AHK always writes the deadline file alongside the named-event
+signal (`mac-gesture-desktop-listener.ahk`), so the file is already meant to be the race-safe fallback
+for a missed event — `Start()` just wasn't honoring that. Fixed: `Start()` now applies the exact same
+plausibility check as `RefreshFromFile`/`ShouldDrop` (only clear if stale or implausible; otherwise
+leave it for the watcher to pick up normally). Verified both branches directly: a planted implausible
+deadline gets cleared (`Cleared stale/implausible deadline file on startup`); a planted deadline still
+~1.9s in the future at read time gets preserved and armed (`Found plausible deadline file on startup
+(boot-race arm), honoring it`).
+
 ---
 
 ## 2026-07-24 - Quarantine Synergy residual wheel during Mac 4-finger gestures
