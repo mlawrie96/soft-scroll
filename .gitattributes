@@ -1,0 +1,49 @@
+# Line-ending policy.
+#
+# WHY THIS FILE EXISTS: this repo is checked out on the Windows/NTFS side of
+# windows-pc as well as on macOS/Linux. With no attributes and core.autocrlf
+# unset both globally and system-wide there, a Windows-side write rewrote whole
+# files to CRLF. Git then reported those files as "modified" while every one of
+# them was byte-identical to HEAD after stripping CR. That phantom dirt is
+# enough to make ml fleet-catchup / safe_pull refuse the host with "dirty
+# working tree (unstaged changes) - refusing reset" and pin it silently; it did
+# exactly that to lawrieverse-infra (28 files, 52 commits behind).
+#
+# core.autocrlf is per-clone and does not travel between clones or hosts.
+# A committed .gitattributes does. That is why this is a tracked file and not a
+# config knob.
+#
+# The correct rule is repo-specific, not copy-pasteable: use "-text" only where
+# the committed blob is genuinely CRLF (pinning bytes on both sides), and "text"
+# where the committed blob is LF. Pinning -text over an LF blob would freeze the
+# worktree CRLF against it and keep the phantom modification alive.
+#
+# gitattributes is "last match wins": the broad rule MUST come first and the
+# specific overrides below intentionally win over it.
+
+* text=auto
+
+# Interpreter scripts: ALWAYS LF in the working tree, on every platform. A CRLF
+# in a shebang ("#!/usr/bin/env sh\r") makes the kernel look for an interpreter
+# literally named "sh\r" and the script fails to launch.
+*.sh   text eol=lf
+*.bash text eol=lf
+*.zsh  text eol=lf
+*.py   text eol=lf
+
+# Windows-native scripts: every blob of these types in this repo's history is
+# committed with LF, so they get "text" (normalise on checkin), NOT "-text".
+*.ps1 text
+*.vbs text
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Binary assets: never touched.
+*.exe binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary
+*.zip binary
+*.gz  binary
